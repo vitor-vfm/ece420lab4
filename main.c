@@ -3,6 +3,7 @@
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 #include "Lab4_IO.h"
@@ -44,6 +45,7 @@ int main(int argc, char *argv[])
 
     r = malloc(nodecount * sizeof(double));
     r_pre = malloc(nodecount * sizeof(double));
+    double *local_buf = calloc(sizeof(double), chunk_size);
     for ( i = 0; i < nodecount; ++i)
         r[i] = 1.0 / nodecount;
     damp_const = (1.0 - DAMPING_FACTOR) / nodecount;
@@ -55,19 +57,21 @@ int main(int argc, char *argv[])
 
         // Calculate for chunk
         for (i = start; i < end; ++i){
-            r[i] = 0;
+            local_buf[i-start] = 0;
             for ( j = 0; j < nodehead[i].num_in_links; ++j)
-                r[i] += r_pre[nodehead[i].inlinks[j]] / num_out_links[nodehead[i].inlinks[j]];
-            r[i] *= DAMPING_FACTOR;
-            r[i] += damp_const;
+                local_buf[i-start] += r_pre[nodehead[i].inlinks[j]] / num_out_links[nodehead[i].inlinks[j]];
+            local_buf[i-start] *= DAMPING_FACTOR;
+            local_buf[i-start] += damp_const;
         }
 
         // send the chunk to other processes
-        MPI_Allgather(&r[start], end-start, MPI_DOUBLE, r, end-start, MPI_DOUBLE, MPI_COMM_WORLD);
+        MPI_Allgather(local_buf, end-start, MPI_DOUBLE, r, end-start, MPI_DOUBLE, MPI_COMM_WORLD);
 
     } while(rel_error(r, r_pre, nodecount) >= EPSILON);
 
     GET_TIME(end_time);
+
+    free(local_buf);
 
     if (rank == 0) {
         Lab4_saveoutput(r, nodecount, end_time - start_time);
