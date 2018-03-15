@@ -39,14 +39,16 @@ int main(int argc, char *argv[])
 
     GET_TIME(start_time);
 
-    const unsigned chunk_size = nodecount / comm_size;
+    const int divisible = !!(nodecount % comm_size);
+    const unsigned chunk_size = nodecount / comm_size + divisible;
     const unsigned start = rank * chunk_size;
-    const unsigned end = start + chunk_size <= nodecount ? start + chunk_size : nodecount;
+    const unsigned end = start + chunk_size;
 
-    r = malloc(nodecount * sizeof(double));
-    r_pre = malloc(nodecount * sizeof(double));
+    const size_t r_size = chunk_size * comm_size;
+    r = malloc(r_size * sizeof(double));
+    r_pre = malloc(r_size * sizeof(double));
     double *local_buf = calloc(sizeof(double), chunk_size);
-    for ( i = 0; i < nodecount; ++i)
+    for ( i = 0; i < r_size; ++i)
         r[i] = 1.0 / nodecount;
     damp_const = (1.0 - DAMPING_FACTOR) / nodecount;
 
@@ -58,10 +60,12 @@ int main(int argc, char *argv[])
         // Calculate for chunk
         for (i = start; i < end; ++i){
             local_buf[i-start] = 0;
-            for ( j = 0; j < nodehead[i].num_in_links; ++j)
-                local_buf[i-start] += r_pre[nodehead[i].inlinks[j]] / num_out_links[nodehead[i].inlinks[j]];
-            local_buf[i-start] *= DAMPING_FACTOR;
-            local_buf[i-start] += damp_const;
+            if (i < nodecount) {
+                for ( j = 0; j < nodehead[i].num_in_links; ++j)
+                    local_buf[i-start] += r_pre[nodehead[i].inlinks[j]] / num_out_links[nodehead[i].inlinks[j]];
+                local_buf[i-start] *= DAMPING_FACTOR;
+                local_buf[i-start] += damp_const;
+            }
         }
 
         // send the chunk to other processes
