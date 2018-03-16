@@ -25,3 +25,6 @@ run_2: main_2
 run_generate: main datatrim
 	./datatrim
 	mpirun -np $(N_PROC) ./main
+
+clean:
+	rm -f main main_2 datatrim serialtester
