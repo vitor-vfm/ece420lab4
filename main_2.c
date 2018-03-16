@@ -1,0 +1,104 @@
+#define LAB4_EXTEND
+
+#include <mpi.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+#include "Lab4_IO.h"
+#include "timer.h"
+
+#define EPSILON 0.00001
+#define DAMPING_FACTOR 0.85
+
+#define THRESHOLD 0.0001
+
+int main(int argc, char *argv[])
+{
+    MPI_Init(&argc, &argv);
+
+    double start_time, end_time;
+
+    int rank, comm_size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+
+    struct node *nodehead;
+    int nodecount;
+    int *num_in_links, *num_out_links;
+    double *r, *r_pre;
+    int i, j;
+    double damp_const;
+    int iterationcount = 0;
+
+    if (get_node_stat(&nodecount, &num_in_links, &num_out_links)) return 254;
+
+    // Calculate the result
+    if (node_init(&nodehead, num_in_links, num_out_links, 0, nodecount)) return 254;
+
+    GET_TIME(start_time);
+
+    const int divisible = !!(nodecount % comm_size);
+    const unsigned chunk_size = nodecount / comm_size + divisible;
+    const unsigned start = rank * chunk_size;
+    const unsigned end = start + chunk_size;
+
+    const size_t r_size = chunk_size * comm_size;
+    r = malloc(r_size * sizeof(double));
+    r_pre = malloc(r_size * sizeof(double));
+    double *local_buf = calloc(sizeof(double), chunk_size);
+    for ( i = 0; i < r_size; ++i)
+        r[i] = 1.0 / nodecount;
+    damp_const = (1.0 - DAMPING_FACTOR) / nodecount;
+
+    // CORE CALCULATION
+    do{
+        ++iterationcount;
+        vec_cp(r, r_pre, nodecount);
+
+        // Calculate for chunk
+        for (i = start; i < end; ++i){
+            local_buf[i-start] = 0;
+            if (i < nodecount) {
+                for ( j = 0; j < nodehead[i].num_in_links; ++j)
+                    local_buf[i-start] += r_pre[nodehead[i].inlinks[j]] / num_out_links[nodehead[i].inlinks[j]];
+                local_buf[i-start] *= DAMPING_FACTOR;
+                local_buf[i-start] += damp_const;
+            }
+        }
+
+        // send the chunk to other processes
+        if (rank == 0) {
+            memcpy(r, local_buf, sizeof(double) * chunk_size);
+            for (int i = 1; i < comm_size; i++) {
+                MPI_Recv(&r[i * chunk_size], chunk_size, MPI_DOUBLE, i, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+            for (int i = 1; i < comm_size; i++) {
+                MPI_Send(r, r_size, MPI_DOUBLE, i, i, MPI_COMM_WORLD);
+            }
+        } else {
+            MPI_Send(local_buf, chunk_size, MPI_DOUBLE, 0, rank, MPI_COMM_WORLD);
+
+            MPI_Recv(r, r_size, MPI_DOUBLE, 0, rank, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+
+        MPI_Barrier(MPI_COMM_WORLD);
+
+    } while(rel_error(r, r_pre, nodecount) >= EPSILON);
+
+    GET_TIME(end_time);
+
+    free(local_buf);
+
+    if (rank == 0) {
+        Lab4_saveoutput(r, nodecount, end_time - start_time);
+    }
+
+    // post processing
+    node_destroy(nodehead, nodecount);
+    free(num_in_links);
+    free(num_out_links);
+
+    MPI_Finalize();
+}
